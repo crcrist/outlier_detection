@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
 
 class StoreOutlierDetector:
     """
@@ -134,7 +138,179 @@ class StoreOutlierDetector:
             'metrics_tracked': store_data['metric'].nunique()
         }
     
-    def print_summary(self):
+    def create_scatter_plot_matrix(self, store_metrics: pd.DataFrame, 
+                                  figsize: Tuple[int, int] = (12, 10),
+                                  save_path: Optional[str] = None) -> None:
+        """
+        Create a multi-metric scatter plot matrix showing outlier stores.
+        
+        Args:
+            store_metrics: Original DataFrame
+            figsize: Figure size (width, height)
+            save_path: Optional path to save the plot
+        """
+        if self.outlier_results is None:
+            print("Please run detect_outliers() first.")
+            return
+        
+        # Prepare data for plotting
+        test_stores = store_metrics[store_metrics['store_type'] == 'test'].copy()
+        
+        # Calculate store averages for each metric
+        store_averages = test_stores.groupby(['store_nbr', 'metric'])['metric_value'].mean().reset_index()
+        
+        # Pivot to get metrics as columns
+        plot_data = store_averages.pivot(index='store_nbr', columns='metric', values='metric_value')
+        
+        # Add outlier status
+        outlier_stores = set(self.outlier_results['store_nbr'].tolist()) if not self.outlier_results.empty else set()
+        plot_data['is_outlier'] = plot_data.index.isin(outlier_stores)
+        plot_data['outlier_type'] = plot_data['is_outlier'].map({True: 'Outlier', False: 'Normal'})
+        
+        # Get metrics (exclude our added columns)
+        metrics = [col for col in plot_data.columns if col not in ['is_outlier', 'outlier_type']]
+        
+        if len(metrics) < 2:
+            print("Need at least 2 metrics to create scatter plot matrix.")
+            return
+        
+        # Create the plot matrix
+        n_metrics = len(metrics)
+        fig, axes = plt.subplots(n_metrics, n_metrics, figsize=figsize)
+        fig.suptitle('Store Performance: Multi-Metric Scatter Plot Matrix', fontsize=16, y=0.98)
+        
+        # Define colors
+        colors = {'Normal': '#1f77b4', 'Outlier': '#d62728'}
+        
+        for i, metric_y in enumerate(metrics):
+            for j, metric_x in enumerate(metrics):
+                ax = axes[i, j] if n_metrics > 1 else axes
+                
+                if i == j:
+                    # Diagonal: histogram
+                    for outlier_type in ['Normal', 'Outlier']:
+                        data_subset = plot_data[plot_data['outlier_type'] == outlier_type]
+                        if not data_subset.empty:
+                            ax.hist(data_subset[metric_x], alpha=0.7, 
+                                   label=outlier_type, color=colors[outlier_type],
+                                   bins=15, density=True)
+                    ax.set_xlabel(self._format_metric_name(metric_x))
+                    ax.set_ylabel('Density')
+                    
+                else:
+                    # Off-diagonal: scatter plot
+                    for outlier_type in ['Normal', 'Outlier']:
+                        data_subset = plot_data[plot_data['outlier_type'] == outlier_type]
+                        if not data_subset.empty:
+                            size = 60 if outlier_type == 'Outlier' else 30
+                            alpha = 0.8 if outlier_type == 'Outlier' else 0.6
+                            ax.scatter(data_subset[metric_x], data_subset[metric_y], 
+                                     c=colors[outlier_type], label=outlier_type,
+                                     s=size, alpha=alpha, edgecolors='white', linewidth=0.5)
+                    
+                    ax.set_xlabel(self._format_metric_name(metric_x))
+                    ax.set_ylabel(self._format_metric_name(metric_y))
+                
+                # Add grid
+                ax.grid(True, alpha=0.3)
+                
+                # Only add legend to top-right plot
+                if i == 0 and j == n_metrics - 1:
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Add summary text
+        n_outliers = len(outlier_stores)
+        n_total = len(plot_data)
+        summary_text = f"Outliers: {n_outliers}/{n_total} stores ({n_outliers/n_total*100:.1f}%)"
+        fig.text(0.02, 0.02, summary_text, fontsize=10, 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.7))
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Plot saved to: {save_path}")
+        
+        plt.show()
+        
+        # Print outlier store details
+        if not self.outlier_results.empty:
+            print(f"\n📍 OUTLIER STORES HIGHLIGHTED IN RED:")
+            for _, row in self.outlier_results.iterrows():
+                metrics_str = ", ".join([f"{m} ({d})" for m, d in 
+                                       zip(row['outlier_metrics'], row['directions'])])
+                print(f"  Store {row['store_nbr']}: {metrics_str}")
+    
+    def _format_metric_name(self, metric: str) -> str:
+        """Format metric names for display."""
+        return metric.replace('_', ' ').title()
+    
+    def create_z_score_heatmap(self, store_metrics: pd.DataFrame,
+                              figsize: Tuple[int, int] = (10, 8),
+                              save_path: Optional[str] = None) -> None:
+        """
+        Create a heatmap showing Z-scores for each store and metric.
+        
+        Args:
+            store_metrics: Original DataFrame
+            figsize: Figure size (width, height)
+            save_path: Optional path to save the plot
+        """
+        if self.outlier_results is None:
+            print("Please run detect_outliers() first.")
+            return
+        
+        # Prepare Z-score data
+        test_stores = store_metrics[store_metrics['store_type'] == 'test'].copy()
+        
+        # Calculate store averages
+        store_averages = test_stores.groupby(['store_nbr', 'metric'])['metric_value'].mean().reset_index()
+        
+        # Calculate global stats for Z-scores
+        global_stats = store_averages.groupby('metric')['metric_value'].agg(['mean', 'std']).reset_index()
+        
+        # Merge and calculate Z-scores
+        store_with_stats = store_averages.merge(global_stats, on='metric')
+        store_with_stats['z_score'] = ((store_with_stats['metric_value'] - store_with_stats['mean']) / 
+                                      store_with_stats['std'])
+        
+        # Pivot for heatmap
+        z_score_matrix = store_with_stats.pivot(index='store_nbr', columns='metric', values='z_score')
+        
+        # Create the heatmap
+        plt.figure(figsize=figsize)
+        
+        # Create custom colormap (blue-white-red)
+        cmap = sns.diverging_palette(220, 20, as_cmap=True)
+        
+        # Plot heatmap
+        sns.heatmap(z_score_matrix, 
+                   cmap=cmap, center=0, 
+                   annot=True, fmt='.1f',
+                   cbar_kws={'label': 'Z-Score'},
+                   linewidths=0.5)
+        
+        plt.title('Store Performance Z-Scores by Metric', fontsize=14, pad=20)
+        plt.xlabel('Metrics', fontsize=12)
+        plt.ylabel('Store Number', fontsize=12)
+        
+        # Highlight outlier stores
+        outlier_stores = set(self.outlier_results['store_nbr'].tolist()) if not self.outlier_results.empty else set()
+        
+        # Add red borders around outlier stores
+        for i, store in enumerate(z_score_matrix.index):
+            if store in outlier_stores:
+                plt.gca().add_patch(plt.Rectangle((0, i), len(z_score_matrix.columns), 1, 
+                                                fill=False, edgecolor='red', lw=3))
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Heatmap saved to: {save_path}")
+        
+        plt.show()
         """Print a summary of outlier detection results."""
         if self.outlier_results is None:
             print("No outlier detection has been run yet.")
@@ -200,7 +376,7 @@ def create_sample_data(n_stores: int = 20, n_weeks: int = 10) -> pd.DataFrame:
 
 
 def main():
-    """Main function to demonstrate the outlier detector."""
+    """Main function to demonstrate the outlier detector with visualizations."""
     # Create sample data
     print("Creating sample data...")
     store_metrics = create_sample_data()
@@ -214,6 +390,13 @@ def main():
     
     # Print summary
     detector.print_summary()
+    
+    # Create visualizations
+    print("\nGenerating scatter plot matrix...")
+    detector.create_scatter_plot_matrix(store_metrics)
+    
+    print("\nGenerating Z-score heatmap...")
+    detector.create_z_score_heatmap(store_metrics)
     
     # Show detailed report for first outlier (if any)
     if not outliers.empty:
