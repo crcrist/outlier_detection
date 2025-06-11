@@ -138,6 +138,28 @@ class StoreOutlierDetector:
             'metrics_tracked': store_data['metric'].nunique()
         }
     
+    def print_summary(self):
+        """Print a summary of outlier detection results."""
+        if self.outlier_results is None:
+            print("No outlier detection has been run yet.")
+            return
+        
+        if self.outlier_results.empty:
+            print("No outlier stores detected with current thresholds.")
+            return
+        
+        print(f"\n🚨 OUTLIER STORES DETECTED: {len(self.outlier_results)} stores")
+        print(f"Threshold: {self.std_threshold} standard deviations")
+        print(f"Minimum outlier metrics: {self.min_outlier_metrics}")
+        print("-" * 60)
+        
+        for _, row in self.outlier_results.iterrows():
+            print(f"Store {row['store_nbr']}:")
+            print(f"  • Outlier in {row['outlier_count']} metric(s): {', '.join(row['outlier_metrics'])}")
+            print(f"  • Max Z-score: {row['max_abs_z_score']:.2f}")
+            print(f"  • Directions: {', '.join(row['directions'])}")
+            print()
+    
     def create_scatter_plot_matrix(self, store_metrics: pd.DataFrame, 
                                   figsize: Tuple[int, int] = (12, 10),
                                   save_path: Optional[str] = None) -> None:
