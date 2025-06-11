@@ -297,8 +297,14 @@ class StoreOutlierDetector:
         store_with_stats['z_score'] = ((store_with_stats['metric_value'] - store_with_stats['mean']) / 
                                       store_with_stats['std'])
         
+        # Handle division by zero (when std = 0)
+        store_with_stats['z_score'] = store_with_stats['z_score'].fillna(0)
+        
         # Pivot for heatmap
         z_score_matrix = store_with_stats.pivot(index='store_nbr', columns='metric', values='z_score')
+        
+        # Ensure all values are numeric and handle any remaining NaN values
+        z_score_matrix = z_score_matrix.astype(float).fillna(0)
         
         # Create the heatmap
         plt.figure(figsize=figsize)
@@ -306,12 +312,20 @@ class StoreOutlierDetector:
         # Create custom colormap (blue-white-red)
         cmap = sns.diverging_palette(220, 20, as_cmap=True)
         
-        # Plot heatmap
-        sns.heatmap(z_score_matrix, 
-                   cmap=cmap, center=0, 
-                   annot=True, fmt='.1f',
-                   cbar_kws={'label': 'Z-Score'},
-                   linewidths=0.5)
+        # Plot heatmap with better error handling
+        try:
+            sns.heatmap(z_score_matrix, 
+                       cmap=cmap, center=0, 
+                       annot=True, fmt='.1f',
+                       cbar_kws={'label': 'Z-Score'},
+                       linewidths=0.5)
+        except Exception as e:
+            print(f"Error creating detailed heatmap: {e}")
+            print("Creating simplified heatmap...")
+            # Fallback to simpler heatmap
+            sns.heatmap(z_score_matrix, 
+                       cmap='RdBu_r', center=0,
+                       cbar_kws={'label': 'Z-Score'})
         
         plt.title('Store Performance Z-Scores by Metric', fontsize=14, pad=20)
         plt.xlabel('Metrics', fontsize=12)
@@ -333,6 +347,13 @@ class StoreOutlierDetector:
             print(f"Heatmap saved to: {save_path}")
         
         plt.show()
+        
+        # Print some debug info
+        print(f"Z-score matrix shape: {z_score_matrix.shape}")
+        print(f"Data types: {z_score_matrix.dtypes.unique()}")
+        print(f"Contains NaN: {z_score_matrix.isnull().any().any()}")
+        if not z_score_matrix.empty:
+            print(f"Z-score range: {z_score_matrix.min().min():.2f} to {z_score_matrix.max().max():.2f}")
         """Print a summary of outlier detection results."""
         if self.outlier_results is None:
             print("No outlier detection has been run yet.")
