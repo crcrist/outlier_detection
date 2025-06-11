@@ -269,14 +269,14 @@ class StoreOutlierDetector:
         return metric.replace('_', ' ').title()
     
     def create_z_score_heatmap(self, store_metrics: pd.DataFrame,
-                              figsize: Tuple[int, int] = (10, 8),
+                              figsize: Optional[Tuple[int, int]] = None,
                               save_path: Optional[str] = None) -> None:
         """
         Create a heatmap showing Z-scores for each store and metric.
         
         Args:
             store_metrics: Original DataFrame
-            figsize: Figure size (width, height)
+            figsize: Figure size (width, height). If None, auto-calculates based on data size
             save_path: Optional path to save the plot
         """
         if self.outlier_results is None:
@@ -306,26 +306,57 @@ class StoreOutlierDetector:
         # Ensure all values are numeric and handle any remaining NaN values
         z_score_matrix = z_score_matrix.astype(float).fillna(0)
         
+        # Auto-calculate figure size if not provided
+        if figsize is None:
+            n_stores = len(z_score_matrix.index)
+            n_metrics = len(z_score_matrix.columns)
+            
+            # Calculate width and height based on content
+            # Width: base + extra for each metric
+            width = max(8, 2 + n_metrics * 1.5)
+            
+            # Height: base + extra for each store (minimum 0.4 inches per store)
+            height = max(6, 3 + n_stores * 0.4)
+            
+            # Cap maximum size to prevent huge plots
+            width = min(width, 20)
+            height = min(height, 30)
+            
+            figsize = (width, height)
+            print(f"Auto-sizing heatmap: {figsize[0]:.1f}x{figsize[1]:.1f} inches for {n_stores} stores x {n_metrics} metrics")
+        
         # Create the heatmap
         plt.figure(figsize=figsize)
         
         # Create custom colormap (blue-white-red)
         cmap = sns.diverging_palette(220, 20, as_cmap=True)
         
+        # Adjust annotation font size based on matrix size
+        n_cells = len(z_score_matrix.index) * len(z_score_matrix.columns)
+        if n_cells > 100:
+            annot_size = 8
+        elif n_cells > 50:
+            annot_size = 10
+        else:
+            annot_size = 12
+        
         # Plot heatmap with better error handling
         try:
             sns.heatmap(z_score_matrix, 
                        cmap=cmap, center=0, 
                        annot=True, fmt='.1f',
+                       annot_kws={'size': annot_size},
                        cbar_kws={'label': 'Z-Score'},
-                       linewidths=0.5)
+                       linewidths=0.5,
+                       square=False)  # Allow rectangular cells
         except Exception as e:
             print(f"Error creating detailed heatmap: {e}")
             print("Creating simplified heatmap...")
             # Fallback to simpler heatmap
             sns.heatmap(z_score_matrix, 
                        cmap='RdBu_r', center=0,
-                       cbar_kws={'label': 'Z-Score'})
+                       cbar_kws={'label': 'Z-Score'},
+                       square=False)
         
         plt.title('Store Performance Z-Scores by Metric', fontsize=14, pad=20)
         plt.xlabel('Metrics', fontsize=12)
@@ -338,9 +369,17 @@ class StoreOutlierDetector:
         for i, store in enumerate(z_score_matrix.index):
             if store in outlier_stores:
                 plt.gca().add_patch(plt.Rectangle((0, i), len(z_score_matrix.columns), 1, 
-                                                fill=False, edgecolor='red', lw=3))
+                                                fill=False, edgecolor='red', lw=2))
         
+        # Improve layout
         plt.tight_layout()
+        
+        # Rotate x-axis labels if needed
+        if len(z_score_matrix.columns) > 5:
+            plt.xticks(rotation=45, ha='right')
+        
+        # Adjust y-axis labels for readability
+        plt.yticks(rotation=0)
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
